@@ -22,6 +22,7 @@ import (
 	"math/big"
 
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/consensys/gnark-crypto/internal/parallel"
 )
 
 // PointAffine point on a twisted Edwards curve
@@ -603,4 +604,49 @@ func (p *PointExtended) setInfinity() *PointExtended {
 // p1 in extended coordinates with a scalar in big.Int
 func (p *PointExtended) ScalarMultiplication(p1 *PointExtended, scalar *big.Int) *PointExtended {
 	return p.scalarMulGLV(p1, scalar)
+}
+
+// BatchProjectiveToAffine converts points in Projective coordinates to Affine coordinates
+// performing a single field inversion (Montgomery batch inversion trick).
+func BatchProjectiveToAffine(points []PointProj) []PointAffine {
+	result := make([]PointAffine, len(points))
+	zeroes := make([]bool, len(points))
+	accumulator := fr.One()
+
+	// batch invert all points[].Z coordinates with Montgomery batch inversion trick
+	// (stores points[].Z^-1 in result[i].X to avoid allocating a slice of fr.Elements)
+	for i := 0; i < len(points); i++ {
+		if points[i].Z.IsZero() {
+			zeroes[i] = true
+			continue
+		}
+		result[i].X = accumulator
+		accumulator.Mul(&accumulator, &points[i].Z)
+	}
+
+	var accInverse fr.Element
+	accInverse.Inverse(&accumulator)
+
+	for i := len(points) - 1; i >= 0; i-- {
+		if zeroes[i] {
+			// do nothing, (X=0, Y=0) is infinity point in affine
+			continue
+		}
+		result[i].X.Mul(&result[i].X, &accInverse)
+		accInverse.Mul(&accInverse, &points[i].Z)
+	}
+
+	// batch convert to affine.
+	parallel.Execute(len(points), func(start, end int) {
+		for i := start; i < end; i++ {
+			if zeroes[i] {
+				// do nothing, (X=0, Y=0) is infinity point in affine
+				continue
+			}
+			a := result[i].X
+			result[i].X.Mul(&points[i].X, &a)
+			result[i].Y.Mul(&points[i].Y, &a)
+		}
+	})
+	return result
 }

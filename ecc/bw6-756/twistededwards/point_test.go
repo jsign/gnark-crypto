@@ -729,6 +729,32 @@ func TestMarshal(t *testing.T) {
 	}
 }
 
+func TestBatchProjectiveToAffine(t *testing.T) {
+	t.Parallel()
+
+	params := GetEdwardsCurve()
+	var baseProj PointProj
+	baseProj.FromAffine(&params.Base)
+
+	var s big.Int
+	s.SetString("52435875175126190479447705081859658376581184513", 10)
+
+	points := make([]PointProj, 10)
+	points[0].ScalarMultiplication(&baseProj, &s)
+	for i := 1; i < 10; i++ {
+		points[i].Double(&points[i-1])
+	}
+
+	affines := BatchProjectiveToAffine(points)
+	for i := 0; i < 10; i++ {
+		var aff PointAffine
+		aff.FromProj(&points[i])
+		if !aff.Equal(&affines[i]) {
+			t.Fatal("batch scalar multiplication failed")
+		}
+	}
+}
+
 // GenBigInt generates a big.Int
 // TODO @thomas we use fr size as max bound here
 func GenBigInt() gopter.Gen {
